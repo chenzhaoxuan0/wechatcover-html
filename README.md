@@ -84,6 +84,61 @@ Claude Code 会自动调用此 Skill 生成封面图。
 
 背景：左深右浅渐变 + 白色颗粒纹理叠加
 
+### 实现原理
+
+整体 pipeline 分为 5 个步骤：
+
+```
+标题输入
+    ↓
+① 关键词提取 + 配色推断
+    ↓
+② 几何图形生成（seed 一致性）
+    ↓
+③ 布局计算 + HTML 生成
+    ↓
+④ Puppeteer 截图 × 2
+    ↓
+⑤ Canvas 拼接 → 最终 PNG
+```
+
+**① 关键词提取**
+
+不取"大而泛"的词（如"方法"、"技巧"），而是从词典中匹配**精准关键词**（如"AIGC"、"私域流量"、"AB测试"）。最多取 3 个，按出现顺序排列。标题同时用于匹配配色档位：
+
+| 标题关键词 | 匹配配色 |
+|-----------|---------|
+| AI/数据/技术... | 天空蓝 |
+| 增长/商业/运营... | 翠鸟绿 |
+| 情感/心理... | 浅粉 |
+| 创意/学术/设计... | 清华紫 |
+| 生活/家居/旅行... | 米色 |
+| 商务/管理/报告... | 黑白 |
+
+**② 几何图形池（Seed 一致性）**
+
+用 `hash(title + schemeKey)` 作为种子，驱动伪随机数生成器，生成 4-5 个几何图形（圆形/三角形/矩形/线条）。关键点：**同一标题生成的两张图，seed 相同，几何图形完全一致**，保证左右视觉统一。图形只出现在右侧 62% 区域，左侧 38% 纯文字。
+
+**③ HTML 生成**
+
+每张图由 SVG + CSS 构建：
+- **渐变背景**：SVG linearGradient，左侧深（fg 色 22% 透明度）→ 右侧浅（7% 透明度）→ 边缘 0
+- **颗粒纹理**：SVG feTurbulence 噪声滤镜，3.5% 透明度叠加，增加质感
+- **关键字大字**：占图面 40%+，使用 system-ui 无衬线字体，左上角
+- **标题小字**：18-45px，左下角，70% 透明度，不换行
+- **几何图形**：绝对定位在右侧，填充/描边两种变体，15-65% 透明度
+- **Logo**：右下角，高度 30%
+
+**④ Puppeteer 截图**
+
+将 HTML 写入临时文件，用 Puppeteer 打开 `file://` URL，设置精确 viewport（1410×600 或 600×600），截图输出 PNG。失败重试 2 次。
+
+**⑤ Canvas 拼接**
+
+用 `canvas` 库创建 2010×600 的画布，左侧贴 1:1 图（600px），右侧贴 2.35:1 图（1410px），白色背景，输出最终 PNG。
+
+---
+
 ### 项目结构
 
 ```
@@ -205,6 +260,50 @@ All images share a uniform height of **600px**:
 **Right 2.35:1 Feed Image**: Large keyword text at top-left, title text at bottom-left, geometric decorations on right, logo at bottom-right
 
 Background: left-dark-to-right-light gradient + white grain texture overlay
+
+### Implementation Principles
+
+The pipeline has 5 stages:
+
+```
+Title Input
+    ↓
+① Keyword Extraction + Color Inference
+    ↓
+② Geometric Shape Generation (seeded consistency)
+    ↓
+③ Layout Calculation + HTML Generation
+    ↓
+④ Puppeteer Screenshot × 2
+    ↓
+⑤ Canvas Stitch → Final PNG
+```
+
+**① Keyword Extraction**
+
+Instead of generic words, it matches **precise keywords** from a dictionary (e.g. "AIGC", "Private Traffic", "AB Test"). Max 3 keywords, ordered by appearance. Keywords also determine the color scheme.
+
+**② Geometry Pool (Seed Consistency)**
+
+Uses `hash(title + schemeKey)` as the seed for a PRNG to generate 4-5 geometric shapes (circle/triangle/rect/line). Key point: **same title = same seed = same shapes on both images**, ensuring visual consistency. Shapes only appear in the right 62% area.
+
+**③ HTML Generation**
+
+Each image is built from SVG + CSS:
+- **Gradient background**: SVG linearGradient, dark on left (fg at 22% opacity) → light on right (7% opacity) → edge 0
+- **Grain texture**: SVG feTurbulence noise filter at 3.5% opacity for texture
+- **Keyword text**: 40%+ of image area, system-ui sans-serif, top-left
+- **Title text**: 18-45px, bottom-left, 70% opacity, no wrap
+- **Geometric shapes**: absolutely positioned on right, filled/outline variants, 15-65% opacity
+- **Logo**: bottom-right, 30% height
+
+**④ Puppeteer Screenshot**
+
+Writes HTML to temp file, opens via `file://` URL with Puppeteer, sets precise viewport (1410×600 or 600×600), screenshots to PNG. Retries 2 times on failure.
+
+**⑤ Canvas Stitch**
+
+Creates a 2010×600 canvas with the `canvas` library, pastes 1:1 image on left (600px) and 2.35:1 image on right (1410px), white background, outputs final PNG.
 
 ### Project Structure
 
