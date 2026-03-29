@@ -1,0 +1,26 @@
+{
+  "name": "wechatcover",
+  "version": "1.0.0",
+  "description": "公众号封面生成 Skill",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "generate": "node src/main.js"
+  },
+  "dependencies": {
+    "canvas": "^3.2.2",
+    "html2canvas": "^1.4.1",
+    "puppeteer": "^24.40.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
