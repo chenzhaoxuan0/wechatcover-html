@@ -8,13 +8,29 @@ const HtmlGenerator = require('./html-generator');
 const { captureFromHtml } = require('./screenshot');
 const { stitchImages } = require('./stitcher');
 
+/**
+ * 获取可靠的临时目录（WSL2 下避免用 /tmp，改用用户家目录）
+ * WSL2 的 /tmp 是 Windows 路径映射，Puppeteer 无法通过 file:// 访问
+ */
+function getTempDir() {
+  const homeTmp = path.join(os.homedir(), '.tmp');
+  if (!fs.existsSync(homeTmp)) {
+    fs.mkdirSync(homeTmp, { recursive: true });
+  }
+  return homeTmp;
+}
+
 async function generateCover(title, options = {}) {
   if (!title || title.trim() === '') {
     throw new Error('标题不能为空');
   }
 
-  const outputPath = options.outputPath || path.join(os.tmpdir(), `wechatcover_${Date.now()}.png`);
-  const logoPath = options.logoPath || null;
+  const cwd = options.cwd || process.cwd();
+  const outputPath = path.resolve(cwd, options.outputPath || path.join(getTempDir(), `wechatcover_${Date.now()}.png`));
+  // 相对路径转为绝对路径，确保 puppeteer 能正确找到文件
+  const logoPath = options.logoPath
+    ? path.resolve(cwd, options.logoPath)
+    : null;
   const articleContent = options.articleContent || null;
 
   // Step 1: 准备背景图 + AI 分析文字颜色
@@ -25,7 +41,7 @@ async function generateCover(title, options = {}) {
     backgroundImage: options.backgroundImage || null,
     textColor: options.textColor || options.aiResult?.textColor || null,
     aiResult: options.aiResult || null,
-    outputDir: os.tmpdir(),
+    outputDir: getTempDir(),
   });
   const bgImagePath = result.bgImagePath;
   const textColor = result.textColor;
@@ -34,7 +50,7 @@ async function generateCover(title, options = {}) {
   // Step 2: 提取关键词（来自 AI 结果）
   const keywords = aiResult.keywords && aiResult.keywords.length > 0
     ? aiResult.keywords
-    : [title.slice(0, 6)]; //兜底：用标题前6字
+    : [title.slice(0, 6)]; // 兜底：用标题前6字
 
   // 尺寸规格
   const W1 = 600;    // 1:1 宽高
