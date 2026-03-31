@@ -17,19 +17,20 @@ async function prepareBackground(title, content, options = {}) {
   const outputDir = options.outputDir || os.tmpdir();
   const bgImagePath = path.join(outputDir, `bg_${Date.now()}.png`);
 
-  let aiResult = {};
-  let textColor = options.textColor || '#111111';
+  // 如果外部已传入 aiResult（由 LLM 直接分析得到），直接使用，跳过 Chat API 调用
+  let aiResult = options.aiResult || {};
+  let textColor = options.textColor || aiResult.textColor || '#111111';
 
   try {
-    // Step 1: AI 提取（如果提供了文章内容）
-    if (content && content.trim()) {
+    // Step 1: AI 提取（如果外部没有传入 aiResult 且提供了文章内容，才调用 Chat API）
+    if (!aiResult.keywords && content && content.trim()) {
       try {
         aiResult = await extractFromArticle(title, content);
       } catch (e) {
         console.warn('AI 提取失败，使用兜底方案:', e.message);
         aiResult = fallbackExtract(title);
       }
-    } else {
+    } else if (!aiResult.keywords) {
       aiResult = fallbackExtract(title);
     }
 
@@ -56,8 +57,8 @@ async function prepareBackground(title, content, options = {}) {
       }
     }
 
-    // Step 3: 分析图片颜色（如果没有手动指定）
-    if (!options.textColor) {
+    // Step 3: 分析图片颜色（如果没有手动指定且外部没有传入 textColor，才调用 API）
+    if (!options.textColor && !aiResult.textColor) {
       try {
         const analysis = await analyzeImageColor(bgUrl);
         textColor = analysis.textColor;

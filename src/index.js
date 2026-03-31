@@ -18,36 +18,16 @@ async function generateCover(title, options = {}) {
   const articleContent = options.articleContent || null;
 
   // Step 1: 准备背景图 + AI 分析文字颜色
-  // Step 1: 准备背景图 + AI 分析文字颜色
-  // 如果外部传入了预计算的 aiResult（由 Claude 等 LLM 直接分析得到），则跳过 API 调用
-  let bgImagePath, textColor, aiResult;
-  if (options.aiResult && options.aiResult.keywords) {
-    // 使用外部传入的 AI 分析结果（不调 API）
-    aiResult = options.aiResult;
-    textColor = options.aiResult.textColor || '#111111';
-    const { prepareBackground: pb } = require('./image-background');
-    const bgResult = await pb(title, articleContent, {
-      backgroundImage: options.backgroundImage || null,
-      textColor,
-      outputDir: os.tmpdir(),
-      skipAiExtract: true, // 跳过 AI 提取，用传入的 aiResult
-    });
-    bgImagePath = bgResult.bgImagePath;
-    if (!textColor) textColor = bgResult.textColor;
-  } else {
-    const result = await prepareBackground(
-      title,
-      articleContent,
-      {
-        backgroundImage: options.backgroundImage || null,
-        textColor: options.textColor || null,
-        outputDir: os.tmpdir(),
-      }
-    );
-    bgImagePath = result.bgImagePath;
-    textColor = result.textColor;
-    aiResult = result.aiResult;
-  }
+  // 如果外部传入了预计算的 aiResult（由 LLM 直接分析得到），则跳过 Chat API 调用
+  const result = await prepareBackground(title, articleContent, {
+    backgroundImage: options.backgroundImage || null,
+    textColor: options.textColor || options.aiResult?.textColor || null,
+    aiResult: options.aiResult || null,
+    outputDir: os.tmpdir(),
+  });
+  const bgImagePath = result.bgImagePath;
+  const textColor = result.textColor;
+  const aiResult = result.aiResult;
 
   // Step 2: 提取关键词（来自 AI 结果）
   const keywords = aiResult.keywords && aiResult.keywords.length > 0
