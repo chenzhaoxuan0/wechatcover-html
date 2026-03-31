@@ -2,7 +2,17 @@
 name: wechatcover-html
 description: |
   微信公众号封面图生成工具。当用户提到"生成微信公众号封面"、"公众号封面图"、"封面设计"、"生成封面"、"文章配图"时触发。
-  根据文章正文自动提取关键词和视觉描述，调用 MiniMax image-01 生成横版背景图，AI 分析图片色调后自动选择高对比度文字色，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图），两图共享几何图形元素保持视觉一致性。
+  直接用 LLM 提取关键词和视觉描述，调用 MiniMax image-01 生成横版背景图，AI 分析图片色调后自动选择高对比度文字色，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图），两图共享几何图形元素保持视觉一致性。
+
+onLaunch:
+  - prompt: |
+      即将使用微信公众号封面图生成工具。
+      如果你有吉祥物 logo 图片（建议尺寸 200×200px 或更高），请提供完整路径（如 ./asset/inkspacebitbase200png.png），生成时将自动嵌入封面右下角。
+      如果没有 logo，或不确定，请回复"无"，封面将不带 logo。
+      请提供 logo 路径（或回复"无"）：
+    memoryKey: wechatcover_logo_path
+    saveToMemory: true
+    ifUnanswered: skip
 ---
 
 # WechatCoverHTML Skill
@@ -14,11 +24,11 @@ description: |
 ```
 标题 + 文章正文
     ↓
-① AI 提取摘要 + 视觉描述 + 关键词（Chat API）
+① LLM 直接分析：提取摘要 + 视觉描述 + 关键词
     ↓
 ② image-01 生成横版背景图
     ↓
-③ AI 分析图片色调 → 自动选择高对比文字色（#111111 或 #FFFFFF）
+③ LLM 分析图片色调 → 自动选择高对比文字色（#111111 或 #FFFFFF）
     ↓
 ④ HTML 生成（背景图 + 关键词 + 标题 + Logo）
     ↓
@@ -92,16 +102,16 @@ wechatcoverHTML/
 ├── SKILL.md
 ├── package.json
 ├── src/
-│   ├── index.js           # generateCover() 主入口（新 pipeline）
-│   ├── ai-extractor.js    # Chat API：提取摘要+视觉描述+关键词
-│   ├── image-background.js # image-01 生成 + 颜色分析
-│   ├── color-schemes.js   # 配色方案（备用）
-│   ├── geometry-pool.js   # 几何图形池
-│   ├── layout-engine.js   # 布局计算
-│   ├── html-generator.js  # HTML 生成（支持背景图）
-│   ├── screenshot.js      # Puppeteer 截图
-│   ├── stitcher.js        # Canvas 左右拼接
-│   └── main.js           # CLI 入口
+│   ├── index.js            # generateCover() 主入口
+│   ├── ai-extractor.js     # 备用：Chat API 提取（正常流程由 LLM 直接分析）
+│   ├── image-background.js  # image-01 生成 + 颜色分析
+│   ├── color-schemes.js    # 配色方案（备用）
+│   ├── geometry-pool.js    # 几何图形池
+│   ├── layout-engine.js    # 布局计算
+│   ├── html-generator.js   # HTML 生成（支持背景图）
+│   ├── screenshot.js       # Puppeteer 截图
+│   ├── stitcher.js         # Canvas 左右拼接
+│   └── main.js            # CLI 入口
 └── asset/
     └── inkspacebitbase200png.png  # 吉祥物 logo
 ```

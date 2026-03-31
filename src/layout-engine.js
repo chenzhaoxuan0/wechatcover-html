@@ -11,7 +11,7 @@ class LayoutEngine {
       keywords: {
         x: Math.round(this.width * 0.05),
         y: Math.round(this.height * 0.06),
-        maxWidth: 1268, // x=71 到 x=1339
+        maxWidth: 1085, // x=71 到 x=1156
         lineHeight: Math.round(this.width * 0.105), // 1.5倍行高（约127px for 1410宽）
         fontSize: Math.round(this.width * 0.075),
       },
