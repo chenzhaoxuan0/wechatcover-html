@@ -2,12 +2,28 @@
 name: wechatcover-html
 description: |
   微信公众号封面图生成工具。当用户提到"生成微信公众号封面"、"公众号封面图"、"封面设计"、"生成封面"、"文章配图"时触发。
-  根据文章标题自动推断配色方案，提取精准关键词作为主视觉大字，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图），两图共享几何图形元素保持视觉一致性。
+  根据文章正文自动提取关键词和视觉描述，调用 MiniMax image-01 生成横版背景图，AI 分析图片色调后自动选择高对比度文字色，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图），两图共享几何图形元素保持视觉一致性。
 ---
 
 # WechatCoverHTML Skill
 
-根据文章标题生成微信公众号封面图，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图）。
+根据文章内容生成微信公众号封面图，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图）。
+
+## 核心流程
+
+```
+标题 + 文章正文
+    ↓
+① AI 提取摘要 + 视觉描述 + 关键词（Chat API）
+    ↓
+② image-01 生成横版背景图
+    ↓
+③ AI 分析图片色调 → 自动选择高对比文字色（#111111 或 #FFFFFF）
+    ↓
+④ HTML 生成（背景图 + 关键词 + 标题 + Logo）
+    ↓
+⑤ Puppeteer 截图 × 2 → Canvas 拼接 → 最终 PNG
+```
 
 ## 使用方式
 
@@ -17,19 +33,25 @@ description: |
 const { generateCover } = require('./src/index');
 
 const result = await generateCover('你的文章标题', {
-  colorScheme: '天空蓝',  // 可选，不传则自动推断
-  outputPath: './output.png',  // 输出路径
+  articleContent: '文章正文内容...',  // 必填，用于 AI 提取关键词和视觉描述
+  outputPath: './output.png',        // 输出路径
   logoPath: './asset/inkspacebitbase200png.png',  // 可选 logo
+  backgroundImage: 'https://...',    // 可选，外部指定背景图（跳过 AI 生成）
+  textColor: '#111111',             // 可选，手动指定文字色
 });
 // result.imagePath  — 拼接后 3.35:1 PNG 路径
 // result.html1Path   — 1:1 HTML 过程文件（用于调试）
 // result.html235Path — 2.35:1 HTML 过程文件（用于调试）
+// result.aiResult    — AI 提取结果 { summary, visualPrompt, keywords, colorAnalysis }
+// result.bgImagePath — 背景图路径
 ```
 
 ### 命令行
 
 ```bash
-node src/main.js "文章标题" [输出路径]
+node src/main.js "文章标题" --content=@article.txt --output=./output.png
+# --content=@file.txt  从文件读取文章正文
+# --content=直接文字   直接传入文章正文
 ```
 
 ## 输入参数
@@ -37,28 +59,21 @@ node src/main.js "文章标题" [输出路径]
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | title | string | 文章标题（必填） |
-| colorScheme | string | 配色档位，不填则自动推断 |
+| articleContent | string | 文章正文（用于 AI 提取关键词和视觉描述） |
 | outputPath | string | 输出 PNG 路径 |
 | logoPath | string | 吉祥物 logo 路径 |
+| backgroundImage | string | 可选，外部指定背景图 URL 或本地路径 |
+| textColor | string | 可选，手动指定文字色（#111111 或 #FFFFFF） |
 
-## 配色方案
+## 文字颜色决策
 
-共 6 档，**单色为主，禁止撞色**：
+由 AI 分析背景图自动决定：
 
-| 档位 | 背景色 | 图形/文字色 | 适用主题 |
-|------|--------|-------------|----------|
-| 黑白 | #FFFFFF | #111111 | 商务/技术 |
-| 米色 | #F5F0E8 | #7A5230 | 温暖/生活 |
-| 浅粉 | #FADADD | #B83A50 | 女性/情感 |
-| 天空蓝 | #BFDCEF | #1A4E8A | 科技/理性 |
-| 翠鸟绿 | #C8E6C9 | #1E5E2E | 增长/自然 |
-| 清华紫 | #DDD0E8 | #5A3E7A | 创意/学术 |
-
-## 精准关键词
-
-从标题中自动提取精准关键词（不取大而泛的词），作为主视觉大字显示在左上角。支持以下精准词：
-
-私域流量、神经网络、裂变、SaaS、Prompt、极简主义、用户旅程、回归分析、高敏感、股权融资、公域引流、拼团、分销、NLP、机器学习、深度学习、计算机视觉、RAG、向量数据库、Prompt工程、GPT-4、AIGC、ChatGPT、Stable Diffusion、MVP、PMF、护城河、差异化、私有化部署、云原生、Docker、Kubernetes、微服务、AB测试、灰度发布、增长黑客、北极星指标、标签体系、用户画像、实证研究、因子分析、回归分析、结构方程、SEM、中介效应、调节效应、文献综述、meta分析、随机对照、双盲实验、依恋类型、原生家庭、认知偏差、心流、内啡肽、多巴胺、血清素、情绪劳动、情感勒索、煤气灯、讨好型、高敏感、回避型、焦虑型、断舍离、露营、自驾游、深度游、小众目的地、攻略、咖啡探店、美食探店、早午餐、仪式感 等。
+| 背景图色调 | 文字颜色 |
+|-----------|----------|
+| 明亮背景 | #111111（深色） |
+| 暗色背景 | #FFFFFF（浅色） |
+| 中间调 | 根据冷/暖色调判断 |
 
 ## 布局规格
 
@@ -68,10 +83,7 @@ node src/main.js "文章标题" [输出路径]
 - **1:1 转发图**：600 × 600 px
 - **拼接总图**：2010 × 600 px（3.35:1）
 
-**左侧 1:1 转发图**：关键字大字（占图面 40%+）在左上，标题小字在左下，logo 在右下
-**右侧 2.35:1 信息流图**：关键字大字在左上，标题小字在左下，几何装饰图形在右侧，logo 在右下
-
-背景：左深右浅渐变 + 白色颗粒纹理叠加
+背景图：`background-size: cover`，保持比例裁剪，两图共享同一张。
 
 ## 项目结构
 
@@ -80,11 +92,13 @@ wechatcoverHTML/
 ├── SKILL.md
 ├── package.json
 ├── src/
-│   ├── index.js           # generateCover() 主入口
-│   ├── color-schemes.js   # 配色方案 + 关键词推断
-│   ├── geometry-pool.js   # 基于 seed 的几何图形池
+│   ├── index.js           # generateCover() 主入口（新 pipeline）
+│   ├── ai-extractor.js    # Chat API：提取摘要+视觉描述+关键词
+│   ├── image-background.js # image-01 生成 + 颜色分析
+│   ├── color-schemes.js   # 配色方案（备用）
+│   ├── geometry-pool.js   # 几何图形池
 │   ├── layout-engine.js   # 布局计算
-│   ├── html-generator.js  # HTML 生成（渐变+颗粒+图形+文字）
+│   ├── html-generator.js  # HTML 生成（支持背景图）
 │   ├── screenshot.js      # Puppeteer 截图
 │   ├── stitcher.js        # Canvas 左右拼接
 │   └── main.js           # CLI 入口
@@ -99,9 +113,19 @@ cd wechatcoverHTML
 npm install
 ```
 
+## 环境变量
+
+需要设置 MiniMax API Key：
+
+```bash
+export MINIMAX_API_KEY="sk-..."
+export MINIMAX_API_HOST="https://api.minimaxi.com"  # 中国大陆
+# 或
+export MINIMAX_API_HOST="https://api.minimax.io"    # 全球
+```
+
 ## 依赖
 
 - Node.js
 - puppeteer
 - canvas
-- html2canvas

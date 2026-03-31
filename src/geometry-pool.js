@@ -1,5 +1,3 @@
-const { COLOR_SCHEMES } = require('./color-schemes');
-
 const SHAPE_TYPES = ['circle', 'triangle', 'rect', 'line'];
 
 function seededRandom(seed) {
@@ -20,13 +18,20 @@ function hashString(str) {
 }
 
 class GeometryPool {
-  constructor(title, schemeKey) {
-    const scheme = COLOR_SCHEMES[schemeKey] || COLOR_SCHEMES['黑白'];
-    this.bg = scheme.bg;
-    this.fg = scheme.fg;
-    this.seed = hashString(title + schemeKey);
+  /**
+   * @param {string} title - 文章标题（用于 seed）
+   * @param {string} schemeKey - 保留参数（兼容旧代码），但不再使用
+   * @param {string} textColor - 文字色（来自 AI 分析）
+   */
+  constructor(title, schemeKey, textColor = '#111111') {
+    this.textColor = textColor;
+    this.seed = hashString(title + (schemeKey || 'default'));
     this.rng = seededRandom(this.seed);
     this.shapes = this._generateShapes();
+  }
+
+  setTextColor(textColor) {
+    this.textColor = textColor;
   }
 
   _generateShapes() {
@@ -52,7 +57,7 @@ class GeometryPool {
   }
 
   getColors() {
-    return { bg: this.bg, fg: this.fg };
+    return { textColor: this.textColor };
   }
 }
 
