@@ -12,7 +12,12 @@ async function captureFromHtml(html, width, height, outputPath) {
   const tmpPng = outputPath || path.join(tmpDir, `cover_${Date.now()}.png`);
 
   const browser = await puppeteer.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--allow-file-access-from-files', // 允许加载 file:// 协议的本地图片
+    ]
   });
   const page = await browser.newPage();
   await page.setViewport({ width, height });

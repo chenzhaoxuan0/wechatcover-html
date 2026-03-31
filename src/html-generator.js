@@ -56,9 +56,22 @@ class HtmlGenerator {
       ? shapes.map(shape => shapeToCSS(shape, this.textColor)).join('\n')
       : '';
 
-    // Logo HTML
-    const logoHTML = logoPath
-      ? `<div style="position:absolute;left:${layout.logo.x}px;top:${layout.logo.y}px;height:${layout.logo.height}px;z-index:20;"><img src="file://${logoPath.replace(/\\/g, '/')}" style="height:100%;width:auto;display:block;" /></div>`
+    // Logo HTML - 嵌入 base64 Data URI（跨计算机兼容）
+    const fs = require('fs');
+    const pathModule = require('path');
+    let logoDataUri = '';
+    if (logoPath) {
+      try {
+        const ext = pathModule.extname(logoPath).slice(1);
+        const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+        const base64 = fs.readFileSync(logoPath).toString('base64');
+        logoDataUri = `data:${mime};base64,${base64}`;
+      } catch (e) {
+        console.warn('Logo file read failed:', e.message);
+      }
+    }
+    const logoHTML = logoDataUri
+      ? `<div style="position:absolute;left:${layout.logo.x}px;top:${layout.logo.y}px;height:${layout.logo.height}px;z-index:20;"><img src="${logoDataUri}" style="height:100%;width:auto;display:block;" /></div>`
       : '';
 
     return `<!DOCTYPE html>
