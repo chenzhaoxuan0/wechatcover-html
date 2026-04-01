@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { prepareBackground } = require('./image-background');
+const { prepareBackground, getArticlePrompt, parseArticleResult, getImagePrompt, parseImageResult } = require('./image-background');
 const { GeometryPool } = require('./geometry-pool');
 const LayoutEngine = require('./layout-engine');
 const HtmlGenerator = require('./html-generator');
@@ -18,7 +18,9 @@ async function generateCover(title, options = {}) {
   const articleContent = options.articleContent || null;
 
   // Step 1: 准备背景图 + AI 分析文字颜色
-  // 如果外部传入了预计算的 aiResult（由 LLM 直接分析得到），则跳过 Chat API 调用
+  // - 如果传入了 options.aiResult（已解析好的 {summary, visualPrompt, keywords, textColor}），直接使用
+  // - 如果没有传入，Skill 不自己调用 LLM，而是使用兜底逻辑
+  // - 调用者可以先调用 getArticlePrompt() / getImagePrompt() 自己用 LLM 解析，再传入 aiResult
   const result = await prepareBackground(title, articleContent, {
     backgroundImage: options.backgroundImage || null,
     textColor: options.textColor || options.aiResult?.textColor || null,
@@ -102,4 +104,11 @@ async function generateCover(title, options = {}) {
   };
 }
 
-module.exports = { generateCover };
+module.exports = {
+  generateCover,
+  // 导出 Prompt 函数，供调用者用 Agent 能力自行解析
+  getArticlePrompt,
+  parseArticleResult,
+  getImagePrompt,
+  parseImageResult,
+};

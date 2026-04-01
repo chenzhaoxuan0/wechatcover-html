@@ -2,7 +2,8 @@
 name: wechatcover-html
 description: |
   微信公众号封面图生成工具。当用户提到"生成微信公众号封面"、"公众号封面图"、"封面设计"、"生成封面"、"文章配图"时触发。
-  直接用 LLM 提取关键词和视觉描述，调用 MiniMax image-01 生成横版背景图，AI 分析图片色调后自动选择高对比度文字色，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图），两图共享几何图形元素保持视觉一致性。
+  不调用 LLM，由调用者（Agent）自行用 LLM 解析关键词和视觉描述，Skill 只负责生成背景图、布局、截图等纯计算任务。
+  背景图使用 MiniMax image-01 生成，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图），两图共享几何图形元素保持视觉一致性。
 
 onLaunch:
   - prompt: |
@@ -19,71 +20,95 @@ onLaunch:
 
 根据文章内容生成微信公众号封面图，输出 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图）。
 
+**架构原则**：Skill 不调用任何 LLM。LLM 解析由调用者（Agent）自行完成，Skill 只负责纯计算任务（生成背景图、布局、截图）。
+
 ## 核心流程
 
 ```
-标题 + 文章正文
-    ↓
-① LLM 直接分析：提取摘要 + 视觉描述 + 关键词
-    ↓
-② image-01 生成横版背景图
-    ↓
-③ LLM 分析图片色调 → 自动选择高对比文字色（#111111 或 #FFFFFF）
-    ↓
-④ HTML 生成（背景图 + 关键词 + 标题 + Logo）
-    ↓
-⑤ Puppeteer 截图 × 2 → Canvas 拼接 → 最终 PNG
+┌─────────────────────────────────────────────────────────────┐
+│  调用者（Agent）                                              │
+│                                                              │
+│  方式 A：无 LLM（兜底）                                       │
+│  generateCover(title) ────────────────────────────→ 兜底结果  │
+│                                                              │
+│  方式 B：先 LLM 解析，再生成封面                               │
+│  1. getArticlePrompt(title, content)                         │
+│                    ↓                                         │
+│  2. Agent 自行调用自己的 LLM 解析                             │
+│                    ↓                                         │
+│  3. parseArticleResult(llmResult) ──→ aiResult              │
+│                    ↓                                         │
+│  4. generateCover(title, { aiResult }) ─────────→ 封面图片   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## 使用方式
 
-### Node.js API
+### 方式 1：Agent 自行 LLM 解析（推荐）
+
+```javascript
+const { generateCover, getArticlePrompt, parseArticleResult, getImagePrompt, parseImageResult } = require('./src/index');
+
+// 1. Agent 自行用 LLM 解析文章
+const prompt = getArticlePrompt(title, content);
+const llmResult = await agentLLM(prompt.systemPrompt, prompt.userPrompt);  // Agent 自己的 LLM
+const aiResult = parseArticleResult(llmResult);
+
+// 2. 传入已解析结果
+const result = await generateCover(title, {
+  articleContent: content,
+  aiResult,  // { summary, visualPrompt, keywords }
+  logoPath: './asset/inkspacebitbase200png.png',
+  outputPath: './output.png',
+});
+```
+
+### 方式 2：直接用（兜底关键词）
 
 ```javascript
 const { generateCover } = require('./src/index');
 
-const result = await generateCover('你的文章标题', {
-  articleContent: '文章正文内容...',  // 必填，用于 AI 提取关键词和视觉描述
-  outputPath: './output.png',        // 输出路径
-  logoPath: './asset/inkspacebitbase200png.png',  // 可选 logo
-  backgroundImage: 'https://...',    // 可选，外部指定背景图（跳过 AI 生成）
-  textColor: '#111111',             // 可选，手动指定文字色
+// 使用兜底关键词（标题前6字），背景图使用默认渐变
+const result = await generateCover(title, {
+  logoPath: './asset/inkspacebitbase200png.png',
 });
-// result.imagePath  — 拼接后 3.35:1 PNG 路径
-// result.html1Path   — 1:1 HTML 过程文件（用于调试）
-// result.html235Path — 2.35:1 HTML 过程文件（用于调试）
-// result.aiResult    — AI 提取结果 { summary, visualPrompt, keywords, colorAnalysis }
-// result.bgImagePath — 背景图路径
 ```
 
-### 命令行
+## 导出函数
 
-```bash
-node src/main.js "文章标题" --content=@article.txt --output=./output.png
-# --content=@file.txt  从文件读取文章正文
-# --content=直接文字   直接传入文章正文
-```
+| 函数 | 说明 |
+|------|------|
+| `generateCover(title, options)` | 主入口，生成封面图 |
+| `getArticlePrompt(title, content)` | 获取文章分析 Prompt，供 Agent 自行 LLM 解析 |
+| `parseArticleResult(text)` | 解析 LLM 返回的文章分析 JSON |
+| `getImagePrompt(imageUrl)` | 获取图片分析 Prompt |
+| `parseImageResult(text)` | 解析 LLM 返回的图片分析 JSON |
 
 ## 输入参数
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | title | string | 文章标题（必填） |
-| articleContent | string | 文章正文（用于 AI 提取关键词和视觉描述） |
+| articleContent | string | 文章正文（用于生成 Prompt） |
 | outputPath | string | 输出 PNG 路径 |
 | logoPath | string | 吉祥物 logo 路径 |
 | backgroundImage | string | 可选，外部指定背景图 URL 或本地路径 |
 | textColor | string | 可选，手动指定文字色（#111111 或 #FFFFFF） |
+| aiResult | object | 可选，预解析结果 `{ summary, visualPrompt, keywords, textColor }` |
 
-## 文字颜色决策
+## 返回值
 
-由 AI 分析背景图自动决定：
-
-| 背景图色调 | 文字颜色 |
-|-----------|----------|
-| 明亮背景 | #111111（深色） |
-| 暗色背景 | #FFFFFF（浅色） |
-| 中间调 | 根据冷/暖色调判断 |
+```javascript
+{
+  imagePath: string,      // 拼接后 3.35:1 PNG 路径
+  preview1to1: Buffer,     // 1:1 图 Buffer
+  preview235to1: Buffer,  // 2.35:1 图 Buffer
+  html1Path: string,      // 1:1 HTML 过程文件
+  html235Path: string,     // 2.35:1 HTML 过程文件
+  aiResult: object,       // AI 提取结果 { summary, visualPrompt, keywords }
+  bgImagePath: string,    // 背景图路径
+}
+```
 
 ## 布局规格
 
@@ -102,13 +127,12 @@ wechatcoverHTML/
 ├── SKILL.md
 ├── package.json
 ├── src/
-│   ├── index.js            # generateCover() 主入口
-│   ├── ai-extractor.js     # 备用：Chat API 提取（正常流程由 LLM 直接分析）
-│   ├── image-background.js  # image-01 生成 + 颜色分析
-│   ├── color-schemes.js    # 配色方案（备用）
+│   ├── index.js            # generateCover() 主入口 + Prompt 导出
+│   ├── ai-extractor.js    # Prompt 生成 + JSON 解析（不调用 LLM）
+│   ├── image-background.js # 背景图处理（仅 generateBackgroundImage 用 MiniMax）
 │   ├── geometry-pool.js    # 几何图形池
 │   ├── layout-engine.js    # 布局计算
-│   ├── html-generator.js   # HTML 生成（支持背景图）
+│   ├── html-generator.js   # HTML 生成
 │   ├── screenshot.js       # Puppeteer 截图
 │   ├── stitcher.js         # Canvas 左右拼接
 │   └── main.js            # CLI 入口
@@ -125,7 +149,7 @@ npm install
 
 ## 环境变量
 
-需要设置 MiniMax API Key：
+生成背景图需要 MiniMax API Key：
 
 ```bash
 export MINIMAX_API_KEY="sk-..."
@@ -133,6 +157,8 @@ export MINIMAX_API_HOST="https://api.minimaxi.com"  # 中国大陆
 # 或
 export MINIMAX_API_HOST="https://api.minimax.io"    # 全球
 ```
+
+**注意**：Skill 本身不调用任何 LLM。LLM 解析由 Agent 自行完成（使用 Agent 自己的 API Key）。
 
 ## 依赖
 

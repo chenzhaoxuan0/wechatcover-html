@@ -19,7 +19,9 @@
 WechatCoverHTML 是一个 Claude Code Skill，可根据文章标题自动生成微信公众号封面图。
 
 **核心功能：**
-- 自动识别标题关键词，匹配专业配色方案
+- Agent 自行 LLM 解析文章关键词和视觉描述（Skill 不调用 LLM）
+- MiniMax image-01 生成横版背景图
+- AI 分析图片色调后自动选择高对比度文字色
 - 输出 3.35:1 拼接图，同时适配转发场景（1:1）和信息流场景（2.35:1）
 - 左右两图共享几何图形元素，保持视觉一致性
 - 支持自定义吉祥物 Logo
@@ -86,34 +88,31 @@ Claude Code 会自动调用此 Skill 生成封面图。
 
 ### 实现原理
 
-整体 pipeline 分为 5 个步骤：
+整体 pipeline 分为 6 个步骤：
 
 ```
 标题输入
     ↓
-① 关键词提取 + 配色推断
+① Agent 自行 LLM 解析：提取摘要 + 视觉描述 + 关键词
     ↓
-② 几何图形生成（seed 一致性）
+② MiniMax image-01 生成横版背景图
     ↓
-③ 布局计算 + HTML 生成
+③ Agent 自行 LLM 分析图片色调 → 高对比文字色
     ↓
-④ Puppeteer 截图 × 2
+④ 几何图形生成（seed 一致性）
     ↓
-⑤ Canvas 拼接 → 最终 PNG
+⑤ Puppeteer 截图 × 2
+    ↓
+⑥ Canvas 拼接 → 最终 PNG
 ```
 
-**① 关键词提取**
+**① LLM 解析（由 Agent 自行完成）**
 
-不取"大而泛"的词（如"方法"、"技巧"），而是从词典中匹配**精准关键词**（如"AIGC"、"私域流量"、"AB测试"）。最多取 3 个，按出现顺序排列。标题同时用于匹配配色档位：
+Skill 本身不调用 LLM，而是提供 `getArticlePrompt()` 函数，供调用者（Agent）自行用 LLM 解析。Agent 调用自己的 LLM 后，用 `parseArticleResult()` 解析 JSON 结果，得到 `{ summary, visualPrompt, keywords }`。
 
-| 标题关键词 | 匹配配色 |
-|-----------|---------|
-| AI/数据/技术... | 天空蓝 |
-| 增长/商业/运营... | 翠鸟绿 |
-| 情感/心理... | 浅粉 |
-| 创意/学术/设计... | 清华紫 |
-| 生活/家居/旅行... | 米色 |
-| 商务/管理/报告... | 黑白 |
+**③ 图片色调分析（由 Agent 自行完成）**
+
+类似地，Skill 提供 `getImagePrompt()` 和 `parseImageResult()`，Agent 自行用 LLM 分析背景图色调，返回 `{ textColor }`。
 
 **② 几何图形池（Seed 一致性）**
 
@@ -148,14 +147,15 @@ wechatcover-html/
 ├── package.json
 ├── cover.png                     # 生成示例
 ├── src/
-│   ├── index.js                  # generateCover() 主入口
-│   ├── color-schemes.js          # 配色方案 + 关键词推断
-│   ├── geometry-pool.js          # 基于 seed 的几何图形池
-│   ├── layout-engine.js          # 布局计算
-│   ├── html-generator.js         # HTML 生成（渐变+颗粒+图形+文字）
-│   ├── screenshot.js             # Puppeteer 截图
-│   ├── stitcher.js               # Canvas 左右拼接
-│   └── main.js                   # CLI 入口
+│   ├── index.js                  # generateCover() 主入口 + Prompt 函数导出
+│   ├── ai-extractor.js           # Prompt 生成 + JSON 解析（不调用 LLM）
+│   ├── image-background.js        # 背景图处理（仅 image-01 生成用 MiniMax）
+│   ├── geometry-pool.js           # 基于 seed 的几何图形池
+│   ├── layout-engine.js           # 布局计算
+│   ├── html-generator.js          # HTML 生成（渐变+颗粒+图形+文字）
+│   ├── screenshot.js              # Puppeteer 截图
+│   ├── stitcher.js                # Canvas 左右拼接
+│   └── main.js                    # CLI 入口
 └── asset/
     └── inkspacebitbase200png.png # 吉祥物 logo
 ```
@@ -164,17 +164,32 @@ wechatcover-html/
 
 如需直接通过命令行或 Node.js API 调用：
 
+**方式 1：Agent 自行 LLM 解析（推荐）**
+```javascript
+const { generateCover, getArticlePrompt, parseArticleResult } = require('./src/index');
+
+// 1. Agent 自行用 LLM 解析
+const prompt = getArticlePrompt(title, content);
+const llmResult = await agentLLM(prompt.systemPrompt, prompt.userPrompt);
+const aiResult = parseArticleResult(llmResult);
+
+// 2. 生成封面
+const result = await generateCover(title, {
+  articleContent: content,
+  aiResult,  // 传入预解析结果
+  outputPath: './output.png',
+  logoPath: './asset/inkspacebitbase200png.png',
+});
+```
+
+**方式 2：直接用（兜底关键词）**
 ```javascript
 const { generateCover } = require('./src/index');
 
 const result = await generateCover('你的文章标题', {
-  colorScheme: '天空蓝',  // 可选，不传则自动推断
   outputPath: './output.png',  // 输出路径
   logoPath: './asset/inkspacebitbase200png.png',  // 可选 logo
 });
-// result.imagePath  — 拼接后 3.35:1 PNG 路径
-// result.html1Path   — 1:1 HTML 过程文件（用于调试）
-// result.html235Path — 2.35:1 HTML 过程文件（用于调试）
 ```
 
 ```bash
@@ -314,14 +329,15 @@ wechatcover-html/
 ├── package.json
 ├── cover.png
 ├── src/
-│   ├── index.js                  # generateCover() main entry
-│   ├── color-schemes.js          # Color scheme + keyword detection
-│   ├── geometry-pool.js          # Seed-based geometric shapes
-│   ├── layout-engine.js          # Layout calculation
-│   ├── html-generator.js         # HTML generation (gradient+grain+shapes+text)
-│   ├── screenshot.js             # Puppeteer screenshot
+│   ├── index.js                  # generateCover() main entry + Prompt exports
+│   ├── ai-extractor.js            # Prompt generation + JSON parsing (no LLM calls)
+│   ├── image-background.js         # Background handling (only image-01 uses MiniMax)
+│   ├── geometry-pool.js           # Seed-based geometric shapes
+│   ├── layout-engine.js           # Layout calculation
+│   ├── html-generator.js          # HTML generation (gradient+grain+shapes+text)
+│   ├── screenshot.js              # Puppeteer screenshot
 │   ├── stitcher.js               # Canvas left-right stitching
-│   └── main.js                   # CLI entry
+│   └── main.js                    # CLI entry
 └── asset/
     └── inkspacebitbase200png.png # Mascot logo
 ```
@@ -330,17 +346,32 @@ wechatcover-html/
 
 For direct CLI or Node.js API usage:
 
+**Method 1: Agent self LLM parsing (recommended)**
+```javascript
+const { generateCover, getArticlePrompt, parseArticleResult } = require('./src/index');
+
+// 1. Agent self parses with LLM
+const prompt = getArticlePrompt(title, content);
+const llmResult = await agentLLM(prompt.systemPrompt, prompt.userPrompt);
+const aiResult = parseArticleResult(llmResult);
+
+// 2. Generate cover
+const result = await generateCover(title, {
+  articleContent: content,
+  aiResult,  // pass pre-parsed result
+  outputPath: './output.png',
+  logoPath: './asset/inkspacebitbase200png.png',
+});
+```
+
+**Method 2: Direct use (fallback keywords)**
 ```javascript
 const { generateCover } = require('./src/index');
 
 const result = await generateCover('Your article title', {
-  colorScheme: 'Sky Blue',  // optional, auto-detected if omitted
   outputPath: './output.png',
   logoPath: './asset/inkspacebitbase200png.png',  // optional logo
 });
-// result.imagePath  — stitched 3.35:1 PNG path
-// result.html1Path   — 1:1 HTML intermediate (for debugging)
-// result.html235Path — 2.35:1 HTML intermediate (for debugging)
 ```
 
 ```bash
