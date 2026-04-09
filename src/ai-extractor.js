@@ -5,12 +5,56 @@ const os = require('os');
 const SKILL_DIR = path.resolve(__dirname, '..');
 const GENERATE_IMAGE_SCRIPT = path.join(SKILL_DIR, 'scripts', 'image', 'generate_image.sh');
 
+/**
+ * 关键词截断函数（按语义完整词截取）
+ * 英文词保留完整，中文词保留完整2字符
+ * @param {string} keyword
+ * @param {number} maxChars
+ * @returns {string}
+ */
+function truncateKeyword(keyword, maxChars = 10) {
+  const trimmed = String(keyword).trim();
+  if (trimmed.length <= maxChars) return trimmed;
+
+  // 英文词：保留完整英文词，不在中途切断
+  if (/[a-zA-Z]/.test(trimmed)) {
+    const lastSpace = trimmed.lastIndexOf(' ', maxChars);
+    const lastDash = trimmed.lastIndexOf('-', maxChars);
+    const cut = Math.max(lastSpace, lastDash);
+    if (cut > 0) return trimmed.slice(0, cut);
+  }
+
+  // 中文词：尽量保留完整2字符
+  let cut = maxChars;
+  if (cut < trimmed.length && /[\u4e00-\u9fff]/.test(trimmed[cut - 1])) {
+    for (let i = cut - 2; i >= Math.max(0, cut - 4); i--) {
+      if (/[\u4e00-\u9fff]/.test(trimmed[i]) && /[\u4e00-\u9fff]/.test(trimmed[i + 1])) {
+        cut = i + 2;
+        break;
+      }
+    }
+  }
+  return trimmed.slice(0, cut);
+}
+
 function getMiniMaxApiKey() {
   return process.env.MINIMAX_API_KEY || '';
 }
 
 function getMiniMaxApiHost() {
   return process.env.MINIMAX_API_HOST || 'https://api.minimaxi.com';
+}
+
+/**
+ * MiniMax API 串行锁（MiniMax 免费账户限制 1 并发）
+ * 所有调用 MiniMax 的 API 请求必须经过此锁，确保串行执行
+ */
+let miniMaxLock = Promise.resolve();
+function acquireMiniMaxLock() {
+  let release;
+  const ticket = new Promise(resolve => { release = resolve; });
+  miniMaxLock = miniMaxLock.then(() => ticket);
+  return release;
 }
 
 /**
@@ -110,29 +154,67 @@ function parseImageAnalysisResult(text) {
 }
 
 /**
- * 用 image-01 生成横版背景图
+ * 用 image-01 生成横版背景图（优先直接 API，失败则用 mmx CLI 兜底）
  * @param {string} visualPrompt - 视觉描述
  * @param {string} outputPath - 输出路径
  * @returns {Promise<string>} - 图片文件路径
  */
 async function generateBackgroundImage(visualPrompt, outputPath) {
+  const fullPrompt = `${visualPrompt}，抽象背景，无文字，高清，适合作为封面背景`;
+  const tmpDir = os.tmpdir();
+  const tmpOutput = outputPath || path.join(tmpDir, `bg_${Date.now()}.png`);
+
+  // 优先尝试 mmx CLI（WSL 等环境兼容性更好）
+  if (await isMmxAvailable()) {
+    try {
+      return await generateViaMmx(fullPrompt, tmpOutput);
+    } catch (mmxErr) {
+      console.warn(`[generateBackgroundImage] mmx CLI failed (${mmxErr.message}), trying direct API...`);
+    }
+  }
+
+  // 直接 API 兜底
+  return await generateViaApi(fullPrompt, tmpOutput);
+}
+
+/**
+ * 检测 mmx CLI 是否可用
+ */
+async function isMmxAvailable() {
+  try {
+    const { execSync } = require('child_process');
+    execSync('mmx --version', { encoding: 'utf-8', timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 直接调用 MiniMax image-01 API 生成图片
+ */
+async function generateViaApi(fullPrompt, tmpOutput) {
+  const release = await acquireMiniMaxLock();
+  try {
+    return await _generateViaApiImpl(fullPrompt, tmpOutput);
+  } finally {
+    release();
+  }
+}
+
+async function _generateViaApiImpl(fullPrompt, tmpOutput) {
   const apiKey = getMiniMaxApiKey();
   const apiHost = getMiniMaxApiHost();
 
   if (!apiKey) {
-    throw new Error('未配置 MINIMAX_API_KEY，无法生成背景图');
+    throw new Error('未配置 MINIMAX_API_KEY');
   }
-
-  // 构造完整 prompt
-  const fullPrompt = `${visualPrompt}，抽象背景，无文字，高清，适合作为封面背景`;
-  const tmpDir = os.tmpdir();
-  const tmpOutput = outputPath || path.join(tmpDir, `bg_${Date.now()}.png`);
 
   const requestBody = {
     model: 'image-01',
     prompt: fullPrompt,
     aspect_ratio: '16:9',
-    response_format: 'url',
+    response_format: 'base64',
     n: 1,
   };
 
@@ -146,24 +228,80 @@ async function generateBackgroundImage(visualPrompt, outputPath) {
   });
 
   if (!response.ok) {
-    throw new Error(`图片生成 API 错误: ${response.status} ${response.statusText}`);
+    throw new Error(`API 错误: ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
-  const imageUrl = data.data?.image_urls?.[0];
+  const base64Data = data.data?.image_urls?.[0];
 
-  if (!imageUrl) {
-    throw new Error('图片生成未返回 URL');
+  if (!base64Data) {
+    throw new Error('图片生成未返回数据');
   }
 
-  // 下载图片到本地
-  const imageResponse = await fetch(imageUrl);
-  if (!imageResponse.ok) {
-    throw new Error(`图片下载失败: ${imageResponse.status}`);
+  // base64 格式直接写入，无须二次请求
+  const buffer = Buffer.from(base64Data, 'base64');
+  fs.writeFileSync(tmpOutput, buffer);
+  return tmpOutput;
+}
+
+/**
+ * 通过 mmx CLI 生成图片（兜底方案）
+ */
+async function generateViaMmx(fullPrompt, tmpOutput) {
+  const { execSync } = require('child_process');
+  const outputDir = path.dirname(tmpOutput);
+  const outputFile = path.basename(tmpOutput, path.extname(tmpOutput));
+
+  // mmx 默认生成 jpg，输出前缀用 bg_
+  const cmd = [
+    'mmx', 'image', 'generate',
+    '--prompt', fullPrompt,
+    '--aspect-ratio', '16:9',
+    '--out-dir', outputDir,
+    '--out-prefix', outputFile || 'bg',
+    '--output', 'json',
+    '--quiet',
+  ].join(' ');
+
+  let output;
+  try {
+    output = execSync(cmd, { encoding: 'utf-8', timeout: 300000 });
+  } catch (e) {
+    throw new Error(`mmx CLI 执行失败: ${e.message}`);
   }
 
-  const buffer = await imageResponse.arrayBuffer();
-  fs.writeFileSync(tmpOutput, Buffer.from(buffer));
+  let savedFile;
+  try {
+    const parsed = JSON.parse(output);
+    savedFile = parsed.saved?.[0];
+  } catch {
+    // mmx 在非交互模式下直接输出文件路径（去掉 [Model: xxx] 前缀）
+    const trimmed = output.trim().replace(/^\[Model:[^\]]*\]\s*/, '');
+    const lines = trimmed.split('\n').filter(l => l.trim());
+    if (lines.length > 0 && lines[0].match(/\.(jpg|png|jpeg)$/i)) {
+      savedFile = lines[0].trim();
+    } else {
+      throw new Error(`mmx 输出解析失败: ${output.slice(0, 200)}`);
+    }
+  }
+
+  if (!savedFile) {
+    throw new Error('mmx 未返回生成文件');
+  }
+
+  // 如果 mmx 返回的是绝对路径，直接使用；否则与 outputDir 拼接
+  const mmxOutputPath = path.isAbsolute(savedFile)
+    ? savedFile
+    : path.join(outputDir, savedFile);
+
+  // 始终复制到 tmpOutput：调用者期望的输出路径由调用者决定
+  // mmx 可能生成 jpg，tmpOutput 可能是 png；扩展名不同也照常复制（浏览器按内容识别 MIME）
+  fs.copyFileSync(mmxOutputPath, tmpOutput);
+
+  // 清理 mmx 原始输出（如果与 tmpOutput 不是同一路径）
+  if (path.resolve(mmxOutputPath) !== path.resolve(tmpOutput)) {
+    try { fs.unlinkSync(mmxOutputPath); } catch { /* ignore cleanup err */ }
+  }
 
   return tmpOutput;
 }
@@ -185,18 +323,32 @@ async function downloadImage(imageUrl, outputPath) {
 }
 
 /**
- * 兜底提取：当 AI 提取失败时使用
+ * 兜底提取：当 AI 提取失败时使用（优先 MiniMax API 从文章内容提取，失败则用标题切字）
  * @param {string} title
- * @returns {{summary, visualPrompt, keywords}}
+ * @param {string} content - 文章正文（可选）
+ * @returns {Promise<{summary, visualPrompt, keywords}>}
  */
-function fallbackExtract(title) {
-  // 用标题前6个字作为关键词（但尽量保持词的完整性）
+async function fallbackExtract(title, content) {
   const rawTitle = title.trim();
+
+  // 如果没有文章内容或内容过短，用标题作为内容尝试 API 提取
+  const apiContent = (!content || content.trim().length < 20) ? rawTitle : content;
+
+  // 优先尝试从文章内容提取（MiniMax chat API）
+  try {
+    const result = await extractViaMiniMaxApi(rawTitle, apiContent);
+    if (result && result.keywords && result.keywords.length > 0) {
+      return result;
+    }
+  } catch (e) {
+    // API 失败，继续用标题兜底
+  }
+
+  // 标题兜底：尽量保持词的完整性
   let keywords = [];
   if (rawTitle.length <= 6) {
     keywords = [rawTitle];
   } else {
-    // 尝试按常见模式切分
     const segments = rawTitle.split(/[,，、和与及为的是有]/).filter(s => s.length >= 2);
     if (segments.length >= 3) {
       keywords = segments.slice(0, 3).map(s => s.trim().slice(0, 6));
@@ -206,10 +358,164 @@ function fallbackExtract(title) {
       keywords = [rawTitle.slice(0, 6)];
     }
   }
+
   return {
     summary: rawTitle.slice(0, 30),
     visualPrompt: '抽象渐变背景，简洁大气',
     keywords: keywords.length > 0 ? keywords : [rawTitle.slice(0, 6)],
+  };
+}
+
+/**
+ * 通过 MiniMax chat API 从文章内容提取关键词（优先 mmx CLI，失败则直接 API）
+ * @param {string} title
+ * @param {string} content
+ * @returns {Promise<{summary, visualPrompt, keywords}>}
+ */
+async function extractViaMiniMaxApi(title, content) {
+  // 优先尝试 mmx CLI（WSL 等环境兼容性更好）
+  if (await isMmxAvailable()) {
+    try {
+      return await extractViaMmxCli(title, content);
+    } catch (mmxErr) {
+      // mmx 失败，继续用直接 API
+    }
+  }
+
+  // 直接 API 兜底
+  return await extractViaDirectApi(title, content);
+}
+
+/**
+ * 通过 mmx CLI 提取文章关键词
+ */
+async function extractViaMmxCli(title, content) {
+  const { execSync } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+
+  const systemPrompt = `你是一个微信公众号文章分析专家。从文章中提取：
+1. 三个关键词（最能概括文章的词或短语，每个不超过10字）
+2. 一句话总结（不超过30字）
+3. 适合做封面背景的视觉描述（抽象、简洁、无文字）
+
+只返回 JSON，不要有其他内容。格式：
+{"keywords":["关键词1","关键词2","关键词3"],"summary":"总结","visualPrompt":"视觉描述"}`;
+
+  const userPrompt = `标题：${title}\n\n内容：${content.slice(0, 2000)}`;
+
+  // 写入临时 JSON 文件，避免 shell 转义问题
+  const tmpFile = path.join(os.tmpdir(), `mmx_chat_${Date.now()}.json`);
+  const messagesJson = JSON.stringify([
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ]);
+  fs.writeFileSync(tmpFile, messagesJson, 'utf8');
+
+  try {
+    const cmd = [
+      'mmx', 'text', 'chat',
+      '--model', 'MiniMax-M2.7',
+      '--messages-file', tmpFile,
+      '--max-tokens', '512',
+      '--output', 'json',
+      '--quiet',
+    ].join(' ');
+
+    let rawOutput = execSync(cmd, { encoding: 'utf-8', timeout: 60000 }).trim();
+    // 去除 markdown code fences（LLM 可能返回 ```json ... ``` 格式）
+    if (rawOutput.startsWith('```')) {
+      rawOutput = rawOutput.replace(/```[a-z]*\n?/g, '').trim();
+    }
+    // 支持从混合文本中提取 JSON（截取第一个 { 到最后一个 }）
+    let jsonStr = rawOutput;
+    const firstBrace = rawOutput.indexOf('{');
+    const lastBrace = rawOutput.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      jsonStr = rawOutput.slice(firstBrace, lastBrace + 1);
+    }
+    const parsed = JSON.parse(jsonStr);
+
+    return {
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.slice(0, 3).map(k => truncateKeyword(k, 12)) : [],
+      summary: (parsed.summary || title.slice(0, 30)),
+      visualPrompt: parsed.visualPrompt || '抽象渐变背景，简洁大气',
+    };
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * 直接调用 MiniMax Chat API 提取文章关键词
+ */
+async function extractViaDirectApi(title, content) {
+  const release = await acquireMiniMaxLock();
+  try {
+    return await _extractViaDirectApiImpl(title, content);
+  } finally {
+    release();
+  }
+}
+
+async function _extractViaDirectApiImpl(title, content) {
+  const apiKey = getMiniMaxApiKey();
+  const apiHost = getMiniMaxApiHost();
+
+  if (!apiKey) {
+    throw new Error('未配置 MINIMAX_API_KEY');
+  }
+
+  const systemPrompt = `你是一个微信公众号文章分析专家。从文章中提取：
+1. 三个关键词（最能概括文章的词或短语，每个不超过10字）
+2. 一句话总结（不超过30字）
+3. 适合做封面背景的视觉描述（抽象、简洁、无文字）
+
+只返回 JSON，不要有其他内容。格式：
+{"keywords":["关键词1","关键词2","关键词3"],"summary":"总结","visualPrompt":"视觉描述"}`;
+
+  const userPrompt = `标题：${title}\n\n内容：${content.slice(0, 2000)}`;
+
+  const response = await fetch(`${apiHost}/v1/text/chatcompletion_v2`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'MiniMax-Text-01',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      max_tokens: 512,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Chat API 错误: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content;
+
+  if (!text) {
+    throw new Error(`Chat API 未返回内容: ${JSON.stringify(data).slice(0, 100)}`);
+  }
+
+  // 去除 markdown code fences
+  let jsonStr = text.replace(/```json\n?|```\n?/g, '').trim();
+  // 支持从混合文本中提取 JSON（截取第一个 { 到最后一个 }）
+  const firstBrace = jsonStr.indexOf('{');
+  const lastBrace = jsonStr.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+  }
+  const parsed = JSON.parse(jsonStr);
+  return {
+    keywords: Array.isArray(parsed.keywords) ? parsed.keywords.slice(0, 3).map(k => truncateKeyword(k, 12)) : [],
+    summary: parsed.summary || title.slice(0, 30),
+    visualPrompt: parsed.visualPrompt || '抽象渐变背景，简洁大气',
   };
 }
 

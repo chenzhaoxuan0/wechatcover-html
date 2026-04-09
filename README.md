@@ -6,7 +6,7 @@
 
 **微信公众号封面图生成工具 — Claude Code Skill**
 
-根据文章标题自动生成专业的公众号封面图，支持 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图）
+根据文章标题或正文自动生成公众号封面图，支持 3.35:1 拼接图（左侧 1:1 转发图 + 右侧 2.35:1 信息流图）
 
 </div>
 
@@ -19,12 +19,12 @@
 WechatCoverHTML 是一个 Claude Code Skill，可根据文章标题自动生成微信公众号封面图。
 
 **核心功能：**
-- Agent 自行 LLM 解析文章关键词和视觉描述（Skill 不调用 LLM）
-- MiniMax image-01 生成横版背景图
-- AI 分析图片色调后自动选择高对比度文字色
+- MiniMax text API 智能提取关键词和视觉描述（内部完成，无需外部 LLM）
+- MiniMax image-01 生成横版 AI 背景图
+- Canvas 分析背景图亮度，自动选择高对比度文字色（白字或黑字）
 - 输出 3.35:1 拼接图，同时适配转发场景（1:1）和信息流场景（2.35:1）
 - 左右两图共享几何图形元素，保持视觉一致性
-- 支持自定义吉祥物 Logo
+- 支持自定义吉祥物 Logo（右下角嵌入）
 
 **使用方式：** 当你在 Claude Code 中提到"生成微信公众号封面"、"公众号封面图"等关键词时，此 Skill 会自动激活。
 
@@ -59,18 +59,16 @@ npm install
 
 Claude Code 会自动调用此 Skill 生成封面图。
 
-### 配色方案
+### 文字配色策略
 
-共 6 档，**单色为主，禁止撞色**：
+**自动亮度检测** — 无需手动指定配色：
 
-| 档位 | 背景色 | 图形/文字色 | 适用主题 |
-|------|--------|-------------|----------|
-| 黑白 | #FFFFFF | #111111 | 商务/技术 |
-| 米色 | #F5F0E8 | #7A5230 | 温暖/生活 |
-| 浅粉 | #FADADD | #B83A50 | 女性/情感 |
-| 天空蓝 | #BFDCEF | #1A4E8A | 科技/理性 |
-| 翠鸟绿 | #C8E6C9 | #1E5E2E | 增长/自然 |
-| 清华紫 | #DDD0E8 | #5A3E7A | 创意/学术 |
+| 背景亮度 | 文字颜色 | 原理 |
+|----------|----------|------|
+| 亮度 < 128（暗色背景） | #FFFFFF（白色） | 暗背景 + 白字，高对比度 |
+| 亮度 ≥ 128（亮色背景） | #111111（黑色） | 亮背景 + 黑字，高对比度 |
+
+背景亮度通过 Canvas 加载图片，逐像素计算 RGB 加权亮度（0.299R + 0.587G + 0.114B），取平均值。
 
 ### 布局规格
 
@@ -80,61 +78,52 @@ Claude Code 会自动调用此 Skill 生成封面图。
 - **1:1 转发图**：600 × 600 px
 - **拼接总图**：2010 × 600 px（3.35:1）
 
-**左侧 1:1 转发图**：关键字大字（占图面 40%+）在左上，标题小字在左下，logo 在右下
+**左侧 1:1 转发图**：关键字大字在左上，标题小字在左下，logo 在右下
 
 **右侧 2.35:1 信息流图**：关键字大字在左上，标题小字在左下，几何装饰图形在右侧，logo 在右下
 
-背景：左深右浅渐变 + 白色颗粒纹理叠加
-
 ### 实现原理
 
-整体 pipeline 分为 6 个步骤：
+整体 pipeline 分为 5 个步骤：
 
 ```
-标题输入
+标题输入（+ 文章正文，可选）
     ↓
-① Agent 自行 LLM 解析：提取摘要 + 视觉描述 + 关键词
+① MiniMax text API 提取关键词 + 视觉描述（内部完成）
     ↓
-② MiniMax image-01 生成横版背景图
+② MiniMax image-01 生成 AI 背景图
     ↓
-③ Agent 自行 LLM 分析图片色调 → 高对比文字色
+③ Canvas 分析背景亮度 → 自动选白/黑文字色
     ↓
-④ 几何图形生成（seed 一致性）
+④ 几何图形生成 + HTML 布局 + Puppeteer 截图
     ↓
-⑤ Puppeteer 截图 × 2
-    ↓
-⑥ Canvas 拼接 → 最终 PNG
+⑤ Canvas 拼接 → 最终 3.35:1 PNG
 ```
 
-**① LLM 解析（由 Agent 自行完成）**
+**① 关键词提取（MiniMax text API，内部完成）**
 
-Skill 本身不调用 LLM，而是提供 `getArticlePrompt()` 函数，供调用者（Agent）自行用 LLM 解析。Agent 调用自己的 LLM 后，用 `parseArticleResult()` 解析 JSON 结果，得到 `{ summary, visualPrompt, keywords }`。
+调用 MiniMax-Text-01 API，从标题和正文中提取：
+- 三个关键词（每个不超过10字）
+- 一句话摘要（不超过30字）
+- 视觉描述（用于 AI 生成背景图）
 
-**③ 图片色调分析（由 Agent 自行完成）**
+关键词经过 `truncateKeyword()` 截断（保留词边界，中文按2字符切分，英文按空格/短横线切分），最终保留完整词。
 
-类似地，Skill 提供 `getImagePrompt()` 和 `parseImageResult()`，Agent 自行用 LLM 分析背景图色调，返回 `{ textColor }`。
+**② AI 背景图（MiniMax image-01）**
 
-**② 几何图形池（Seed 一致性）**
+调用 MiniMax image-01 API 生成横版背景图（16:9），prompt 追加"抽象背景，无文字，高清"。优先使用 mmx CLI，失败则直连 API（响应格式 base64）。
 
-用 `hash(title + schemeKey)` 作为种子，驱动伪随机数生成器，生成 4-5 个几何图形（圆形/三角形/矩形/线条）。关键点：**同一标题生成的两张图，seed 相同，几何图形完全一致**，保证左右视觉统一。图形只出现在右侧 62% 区域，左侧 38% 纯文字。
+**③ 亮度检测（Canvas）**
 
-**③ HTML 生成**
+用 `canvas` 库加载背景图，逐像素计算亮度，透明像素跳过。亮度 < 128 选白字，≥ 128 选黑字。
 
-每张图由 SVG + CSS 构建：
-- **渐变背景**：SVG linearGradient，左侧深（fg 色 22% 透明度）→ 右侧浅（7% 透明度）→ 边缘 0
-- **颗粒纹理**：SVG feTurbulence 噪声滤镜，3.5% 透明度叠加，增加质感
-- **关键字大字**：占图面 40%+，使用 system-ui 无衬线字体，左上角
-- **标题小字**：18-45px，左下角，70% 透明度，不换行
-- **几何图形**：绝对定位在右侧，填充/描边两种变体，15-65% 透明度
-- **Logo**：右下角，高度 30%
+**④ HTML 生成 + 截图**
 
-**④ Puppeteer 截图**
-
-将 HTML 写入临时文件，用 Puppeteer 打开 `file://` URL，设置精确 viewport（1410×600 或 600×600），截图输出 PNG。失败重试 2 次。
+背景图以 base64 Data URI 内嵌（避免 file:// 跨域），配合 CSS 渐变、几何图形、文字叠加。Puppeteer 设置精确 viewport 截图，失败重试 2 次。
 
 **⑤ Canvas 拼接**
 
-用 `canvas` 库创建 2010×600 的画布，左侧贴 1:1 图（600px），右侧贴 2.35:1 图（1410px），白色背景，输出最终 PNG。
+用 `canvas` 库将 1:1 图（左侧600px）和 2.35:1 图（右侧1410px）拼接为 2010×600 最终 PNG。
 
 ---
 
@@ -145,61 +134,40 @@ wechatcover-html/
 ├── SKILL.md                      # Skill 定义文件（Claude Code 自动读取）
 ├── README.md                     # 本文件
 ├── package.json
-├── cover.png                     # 生成示例
 ├── src/
 │   ├── index.js                  # generateCover() 主入口 + Prompt 函数导出
-│   ├── ai-extractor.js           # Prompt 生成 + JSON 解析（不调用 LLM）
-│   ├── image-background.js        # 背景图处理（仅 image-01 生成用 MiniMax）
-│   ├── geometry-pool.js           # 基于 seed 的几何图形池
-│   ├── layout-engine.js           # 布局计算
-│   ├── html-generator.js          # HTML 生成（渐变+颗粒+图形+文字）
-│   ├── screenshot.js              # Puppeteer 截图
-│   ├── stitcher.js                # Canvas 左右拼接
-│   └── main.js                    # CLI 入口
+│   ├── ai-extractor.js           # MiniMax API 调用、Prompt 生成、JSON 解析
+│   ├── image-background.js       # 背景图处理 + 亮度检测
+│   ├── geometry-pool.js          # 基于 seed 的几何图形池
+│   ├── layout-engine.js          # 布局计算
+│   ├── html-generator.js         # HTML 生成
+│   ├── screenshot.js             # Puppeteer 截图
+│   ├── stitcher.js               # Canvas 左右拼接
+│   └── main.js                   # CLI 入口
 └── asset/
-    └── inkspacebitbase200png.png # 吉祥物 logo
+    └── inkspacebitbase200png.png # 吉祥物 logo（可选）
 ```
 
 ### 开发者选项
 
-如需直接通过命令行或 Node.js API 调用：
+如需直接通过 Node.js API 调用：
 
-**方式 1：Agent 自行 LLM 解析（推荐）**
-```javascript
-const { generateCover, getArticlePrompt, parseArticleResult } = require('./src/index');
-
-// 1. Agent 自行用 LLM 解析
-const prompt = getArticlePrompt(title, content);
-const llmResult = await agentLLM(prompt.systemPrompt, prompt.userPrompt);
-const aiResult = parseArticleResult(llmResult);
-
-// 2. 生成封面
-const result = await generateCover(title, {
-  articleContent: content,
-  aiResult,  // 传入预解析结果
-  outputPath: './output.png',
-  logoPath: './asset/inkspacebitbase200png.png',
-});
-```
-
-**方式 2：直接用（兜底关键词）**
 ```javascript
 const { generateCover } = require('./src/index');
 
 const result = await generateCover('你的文章标题', {
-  outputPath: './output.png',  // 输出路径
-  logoPath: './asset/inkspacebitbase200png.png',  // 可选 logo
+  articleContent: '文章正文（可选，传入会提高关键词质量）',
+  outputPath: './output.png',
+  logoPath: './asset/inkspacebitbase200png.png', // 可选
 });
+// result.imagePath      // 最终 3.35:1 PNG 路径
+// result.aiResult       // { summary, visualPrompt, keywords }
+// result.bgImagePath    // AI 背景图路径
 ```
 
 ```bash
 # 命令行调用
 node src/main.js "文章标题" [输出路径]
-```
-
-```bash
-# 安装依赖（如需开发者模式）
-npm install
 ```
 
 ---
@@ -211,10 +179,12 @@ npm install
 WechatCoverHTML is a Claude Code Skill that automatically generates WeChat public account cover images from article titles.
 
 **Key Features:**
-- Auto-detect keywords from titles and match professional color schemes
-- Output 3.35:1 stitched image (1:1 forward image on left + 2.35:1 feed image on right)
+- MiniMax text API extracts keywords + visual prompts internally (no external LLM needed)
+- MiniMax image-01 generates AI background images
+- Canvas-based brightness detection auto-selects white or black text for high contrast
+- Output 3.35:1 stitched image (1:1 forward + 2.35:1 feed)
 - Both images share geometric elements for visual consistency
-- Support custom mascot/logo
+- Support custom mascot/logo (bottom-right)
 
 **Usage:** This Skill activates automatically when you mention "WeChat cover", "公众号封面", etc. in Claude Code conversations.
 
@@ -237,8 +207,6 @@ cd ~/.claude/skills/wechatcover-html
 npm install
 ```
 
-> **Note**: Claude Code automatically scans `~/.claude/skills/` for Skills. No additional configuration needed after cloning.
-
 ### Usage
 
 Simply describe your request in conversation:
@@ -249,18 +217,16 @@ Generate a WeChat public account cover image with the title "Using AI Agents wel
 
 Claude Code will automatically invoke this Skill.
 
-### Color Schemes
+### Text Color Strategy
 
-6 schemes available, **monochromatic with no color clashing**:
+**Automatic brightness detection:**
 
-| Scheme | Background | Text/Graphics | Best For |
-|--------|-----------|---------------|----------|
-| B&W | #FFFFFF | #111111 | Business/Tech |
-| Beige | #F5F0E8 | #7A5230 | Warmth/Lifestyle |
-| Pink | #FADADD | #B83A50 | Female/Emotion |
-| Sky Blue | #BFDCEF | #1A4E8A | Tech/Rational |
-| Kingfisher | #C8E6C9 | #1E5E2E | Growth/Nature |
-| Tsinghua Purple | #DDD0E8 | #5A3E7A | Creative/Academic |
+| Background Brightness | Text Color | Principle |
+|-----------------------|------------|-----------|
+| < 128 (dark bg) | #FFFFFF (white) | Dark bg + white text, high contrast |
+| ≥ 128 (light bg) | #111111 (black) | Light bg + black text, high contrast |
+
+Brightness is computed pixel-by-pixel using weighted RGB (0.299R + 0.587G + 0.114B), skipping transparent pixels.
 
 ### Layout Specs
 
@@ -270,118 +236,60 @@ All images share a uniform height of **600px**:
 - **1:1 Forward Image**: 600 × 600 px
 - **Stitched Total**: 2010 × 600 px (3.35:1)
 
-**Left 1:1 Forward Image**: Large keyword text (40%+ of image) at top-left, title text at bottom-left, logo at bottom-right
-
-**Right 2.35:1 Feed Image**: Large keyword text at top-left, title text at bottom-left, geometric decorations on right, logo at bottom-right
-
-Background: left-dark-to-right-light gradient + white grain texture overlay
-
 ### Implementation Principles
 
-The pipeline has 5 stages:
+5-stage pipeline:
 
 ```
-Title Input
+Title Input (+ article body, optional)
     ↓
-① Keyword Extraction + Color Inference
+① MiniMax text API extracts keywords + visual prompt (internal)
     ↓
-② Geometric Shape Generation (seeded consistency)
+② MiniMax image-01 generates AI background image
     ↓
-③ Layout Calculation + HTML Generation
+③ Canvas brightness detection → auto white/black text
     ↓
-④ Puppeteer Screenshot × 2
+④ Geometry + HTML layout + Puppeteer screenshot × 2
     ↓
-⑤ Canvas Stitch → Final PNG
+⑤ Canvas stitch → Final 3.35:1 PNG
 ```
-
-**① Keyword Extraction**
-
-Instead of generic words, it matches **precise keywords** from a dictionary (e.g. "AIGC", "Private Traffic", "AB Test"). Max 3 keywords, ordered by appearance. Keywords also determine the color scheme.
-
-**② Geometry Pool (Seed Consistency)**
-
-Uses `hash(title + schemeKey)` as the seed for a PRNG to generate 4-5 geometric shapes (circle/triangle/rect/line). Key point: **same title = same seed = same shapes on both images**, ensuring visual consistency. Shapes only appear in the right 62% area.
-
-**③ HTML Generation**
-
-Each image is built from SVG + CSS:
-- **Gradient background**: SVG linearGradient, dark on left (fg at 22% opacity) → light on right (7% opacity) → edge 0
-- **Grain texture**: SVG feTurbulence noise filter at 3.5% opacity for texture
-- **Keyword text**: 40%+ of image area, system-ui sans-serif, top-left
-- **Title text**: 18-45px, bottom-left, 70% opacity, no wrap
-- **Geometric shapes**: absolutely positioned on right, filled/outline variants, 15-65% opacity
-- **Logo**: bottom-right, 30% height
-
-**④ Puppeteer Screenshot**
-
-Writes HTML to temp file, opens via `file://` URL with Puppeteer, sets precise viewport (1410×600 or 600×600), screenshots to PNG. Retries 2 times on failure.
-
-**⑤ Canvas Stitch**
-
-Creates a 2010×600 canvas with the `canvas` library, pastes 1:1 image on left (600px) and 2.35:1 image on right (1410px), white background, outputs final PNG.
 
 ### Project Structure
 
 ```
 wechatcover-html/
-├── SKILL.md                      # Skill definition (auto-read by Claude Code)
+├── SKILL.md
 ├── README.md
 ├── package.json
-├── cover.png
 ├── src/
 │   ├── index.js                  # generateCover() main entry + Prompt exports
-│   ├── ai-extractor.js            # Prompt generation + JSON parsing (no LLM calls)
-│   ├── image-background.js         # Background handling (only image-01 uses MiniMax)
-│   ├── geometry-pool.js           # Seed-based geometric shapes
-│   ├── layout-engine.js           # Layout calculation
-│   ├── html-generator.js          # HTML generation (gradient+grain+shapes+text)
-│   ├── screenshot.js              # Puppeteer screenshot
-│   ├── stitcher.js               # Canvas left-right stitching
-│   └── main.js                    # CLI entry
+│   ├── ai-extractor.js          # MiniMax API calls, prompts, JSON parsing
+│   ├── image-background.js       # Background handling + brightness detection
+│   ├── geometry-pool.js         # Seed-based geometric shapes
+│   ├── layout-engine.js         # Layout calculation
+│   ├── html-generator.js        # HTML generation
+│   ├── screenshot.js            # Puppeteer screenshot
+│   ├── stitcher.js              # Canvas left-right stitching
+│   └── main.js                  # CLI entry
 └── asset/
-    └── inkspacebitbase200png.png # Mascot logo
+    └── inkspacebitbase200png.png # Mascot logo (optional)
 ```
 
 ### Developer Options
 
-For direct CLI or Node.js API usage:
-
-**Method 1: Agent self LLM parsing (recommended)**
-```javascript
-const { generateCover, getArticlePrompt, parseArticleResult } = require('./src/index');
-
-// 1. Agent self parses with LLM
-const prompt = getArticlePrompt(title, content);
-const llmResult = await agentLLM(prompt.systemPrompt, prompt.userPrompt);
-const aiResult = parseArticleResult(llmResult);
-
-// 2. Generate cover
-const result = await generateCover(title, {
-  articleContent: content,
-  aiResult,  // pass pre-parsed result
-  outputPath: './output.png',
-  logoPath: './asset/inkspacebitbase200png.png',
-});
-```
-
-**Method 2: Direct use (fallback keywords)**
 ```javascript
 const { generateCover } = require('./src/index');
 
 const result = await generateCover('Your article title', {
+  articleContent: 'Article body (optional, improves keyword quality)',
   outputPath: './output.png',
-  logoPath: './asset/inkspacebitbase200png.png',  // optional logo
+  logoPath: './asset/inkspacebitbase200png.png', // optional
 });
 ```
 
 ```bash
 # CLI
 node src/main.js "Article Title" [output path]
-```
-
-```bash
-# Install dependencies (developer mode)
-npm install
 ```
 
 ---

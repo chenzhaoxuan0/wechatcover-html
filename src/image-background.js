@@ -4,6 +4,38 @@ const os = require('os');
 const { getArticleAnalysisPrompt, parseAnalysisResult, getImageAnalysisPrompt, parseImageAnalysisResult, generateBackgroundImage, downloadImage, fallbackExtract } = require('./ai-extractor');
 
 /**
+ * 使用 canvas 检测图像平均亮度（同时支持 PNG 和 JPEG）
+ * @param {string} filePath - 图片路径
+ * @returns {Promise<number>} - 平均亮度 0-255
+ */
+async function getImageBrightness(filePath) {
+  try {
+    const { createCanvas, loadImage } = require('canvas');
+    const img = await loadImage(filePath);
+    const canvas = createCanvas(img.width, img.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, img.width, img.height);
+    const data = imageData.data;
+
+    // 采样策略：每隔 N 个像素取一个
+    const step = Math.max(1, Math.floor(data.length / 4 / 2000));
+    let total = 0, count = 0;
+    for (let i = 0; i < data.length; i += 4 * step) {
+      const a = data[i + 3];
+      if (a < 128) continue; // 跳过透明像素
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      total += 0.299 * r + 0.587 * g + 0.114 * b;
+      count++;
+    }
+    return count > 0 ? total / count : 128;
+  } catch (e) {
+    console.warn('[getImageBrightness] 分析失败:', e.message);
+    return 128;
+  }
+}
+
+/**
  * 获取文章分析的 Prompt（供外部 Agent 解析）
  * @param {string} title - 文章标题
  * @param {string} content - 文章正文
@@ -60,13 +92,9 @@ async function prepareBackground(title, content, options = {}) {
   let aiResult = options.aiResult || {};
   let textColor = options.textColor || aiResult.textColor || '#111111';
 
-  // Step 1: 如果没有外部传入 aiResult，使用兜底
+  // Step 1: 如果没有外部传入 aiResult，使用兜底（优先 MiniMax API 从文章内容提取）
   if (!aiResult.keywords && !aiResult.visualPrompt) {
-    if (content && content.trim()) {
-      // 内容存在但无 aiResult：尝试用 getArticlePrompt 解析（如果调用者传入了 aiResult 就跳过）
-      // 注意：Skill 本身不调用 LLM，这里只是用兜底
-    }
-    aiResult = fallbackExtract(title);
+    aiResult = await fallbackExtract(title, content);
   }
 
   // Step 2: 生成背景图
@@ -93,9 +121,11 @@ async function prepareBackground(title, content, options = {}) {
   }
 
   // Step 3: 文字颜色
-  // 如果没有指定且 aiResult 没有，提供默认值
+  // 如果没有指定，根据背景图亮度自动选择：暗背景用白色文字，亮背景用黑色文字
   if (!options.textColor && !aiResult.textColor) {
-    textColor = '#111111';
+    const brightness = await getImageBrightness(bgImagePath);
+    textColor = brightness < 128 ? '#FFFFFF' : '#111111';
+    console.log(`[prepareBackground] 背景亮度=${Math.round(brightness)} → 文字颜色=${textColor}`);
   }
 
   return {
@@ -118,6 +148,7 @@ async function createSolidColorBg(outputPath, color) {
 
 module.exports = {
   prepareBackground,
+  getImageBrightness,
   getArticlePrompt,
   parseArticleResult,
   getImagePrompt,

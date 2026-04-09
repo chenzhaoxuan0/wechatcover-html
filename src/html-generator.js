@@ -1,3 +1,6 @@
+const fs = require('fs');
+const pathModule = require('path');
+
 function shapeToCSS(shape, color) {
   const { type, px, py, size, opacity, rotation, variant } = shape;
   const style = `position:absolute;left:${px}px;top:${py}px;opacity:${opacity};transform:rotate(${rotation}deg);color:${color};`;
@@ -32,10 +35,23 @@ class HtmlGenerator {
   }
 
   generate({ title, keywords, shapes, layout, logoPath }) {
-    // 背景图容器
-    const bgStyle = this.bgImage
-      ? `background-image:url('file://${this.bgImage.replace(/\\/g, '/')}');background-size:cover;background-position:center;`
-      : '';
+    // 背景图：优先内嵌 base64（避免 file:// 跨域问题），退化为 file:// URL
+    let bgStyle = '';
+    if (this.bgImage) {
+      try {
+        const imgData = fs.readFileSync(this.bgImage);
+        // 按内容检测 MIME 类型，避免扩展名与实际格式不符（如 mmx 输出 jpg 但命名为 png）
+        const magic = imgData[0];
+        const mime = (magic === 0xFF && imgData[1] === 0xD8) ? 'image/jpeg'
+                  : (magic === 0x89 && imgData[2] === 0x50 && imgData[3] === 0x4E) ? 'image/png'
+                  : 'image/png';
+        const dataUri = `data:${mime};base64,${imgData.toString('base64')}`;
+        bgStyle = `background-image:url('${dataUri}');background-size:cover;background-position:center;`;
+      } catch (e) {
+        // 文件读取失败，降级为 file:// URL
+        bgStyle = `background-image:url('file://${this.bgImage.replace(/\\/g, '/')}');background-size:cover;background-position:center;`;
+      }
+    }
 
     // 关键字 HTML
     const keywordsHTML = keywords && keywords.length > 0
@@ -57,8 +73,6 @@ class HtmlGenerator {
       : '';
 
     // Logo HTML - 嵌入 base64 Data URI（跨计算机兼容）
-    const fs = require('fs');
-    const pathModule = require('path');
     let logoDataUri = '';
     if (logoPath) {
       try {
