@@ -27,10 +27,11 @@ async function generateCover(title, options = {}) {
 
   const cwd = options.cwd || process.cwd();
   const outputPath = path.resolve(cwd, options.outputPath || path.join(getTempDir(), `wechatcover_${Date.now()}.png`));
-  // 相对路径转为绝对路径，确保 puppeteer 能正确找到文件
+  // logo 路径：优先用传入值，其次默认固定路径
+  const defaultLogoPath = path.resolve(__dirname, 'asset', 'inkspacebitbase200png.png');
   const logoPath = options.logoPath
     ? path.resolve(cwd, options.logoPath)
-    : null;
+    : (fs.existsSync(defaultLogoPath) ? defaultLogoPath : null);
   const articleContent = options.articleContent || null;
 
   // Step 1: 准备背景图 + AI 分析文字颜色
