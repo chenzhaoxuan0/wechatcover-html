@@ -334,35 +334,59 @@ async function fallbackExtract(title, content) {
   // 如果没有文章内容或内容过短，用标题作为内容尝试 API 提取
   const apiContent = (!content || content.trim().length < 20) ? rawTitle : content;
 
-  // 优先尝试从文章内容提取（MiniMax chat API）
-  try {
-    const result = await extractViaMiniMaxApi(rawTitle, apiContent);
-    if (result && result.keywords && result.keywords.length > 0) {
-      return result;
+  // 优先尝试从文章内容提取（MiniMax chat API），最多重试 2 次（间隔 3s）
+  const maxRetries = 2;
+  const retryDelay = 3000;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      console.warn(`[fallbackExtract] API 第 ${attempt} 次重试，等待 ${retryDelay / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
-  } catch (e) {
-    // API 失败，继续用标题兜底
+    try {
+      const result = await extractViaMiniMaxApi(rawTitle, apiContent);
+      if (result && result.keywords && result.keywords.length > 0) {
+        if (attempt > 0) {
+          console.warn(`[fallbackExtract] 第 ${attempt} 次重试成功`);
+        }
+        return result;
+      }
+    } catch (e) {
+      console.warn(`[fallbackExtract] API 调用失败（${attempt + 1}/${maxRetries + 1}）: ${e.message}`);
+    }
   }
 
-  // 标题兜底：尽量保持词的完整性
+  // 所有重试均失败后，才使用标题兜底（按语义完整词截断，不强行截前6字）
+  console.warn(`[fallbackExtract] 所有重试失败，使用标题兜底`);
+  return titleFallback(rawTitle);
+}
+
+/**
+ * 标题兜底：按语义完整词截断关键词，尽量保留完整词
+ * @param {string} rawTitle
+ * @returns {{summary, visualPrompt, keywords}}
+ */
+function titleFallback(rawTitle) {
+  const MAX_KEYWORD_LEN = 8; // 每个关键词最多 8 字符
   let keywords = [];
-  if (rawTitle.length <= 6) {
+
+  if (rawTitle.length <= MAX_KEYWORD_LEN) {
     keywords = [rawTitle];
   } else {
-    const segments = rawTitle.split(/[,，、和与及为的是有]/).filter(s => s.length >= 2);
-    if (segments.length >= 3) {
-      keywords = segments.slice(0, 3).map(s => s.trim().slice(0, 6));
-    } else if (segments.length > 0) {
-      keywords = [segments[0].trim().slice(0, 6)];
+    // 按常见分隔符切分，尽量保留完整词
+    const segments = rawTitle.split(/[,，、和与及为的是有:：、。.]/).filter(s => s.trim().length >= 2);
+    if (segments.length >= 2) {
+      // 取前 3 个片段，每个按完整词截断
+      keywords = segments.slice(0, 3).map(s => truncateKeyword(s.trim(), MAX_KEYWORD_LEN));
     } else {
-      keywords = [rawTitle.slice(0, 6)];
+      // 无法切分，直接用 truncateKeyword 截断（保留英文词边界）
+      keywords = [truncateKeyword(rawTitle, MAX_KEYWORD_LEN)];
     }
   }
 
   return {
     summary: rawTitle.slice(0, 30),
     visualPrompt: '抽象渐变背景，简洁大气',
-    keywords: keywords.length > 0 ? keywords : [rawTitle.slice(0, 6)],
+    keywords: keywords.length > 0 ? keywords : [truncateKeyword(rawTitle, MAX_KEYWORD_LEN)],
   };
 }
 
