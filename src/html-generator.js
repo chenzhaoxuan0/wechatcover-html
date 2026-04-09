@@ -85,7 +85,7 @@ class HtmlGenerator {
       }
     }
     const logoHTML = logoDataUri
-      ? `<div style="position:absolute;left:${layout.logo.x}px;top:${layout.logo.y}px;height:${layout.logo.height}px;z-index:20;"><img src="${logoDataUri}" style="height:100%;width:auto;display:block;" /></div>`
+      ? `<div style="position:absolute;left:${layout.logo.x}px;top:${layout.logo.y}px;height:${layout.logo.height}px;z-index:20;background:transparent;padding:4px 6px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;"><img src="${logoDataUri}" style="height:100%;width:auto;display:block;" /></div>`
       : '';
 
     return `<!DOCTYPE html>
