@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![封面预览](https://minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com/ccv2%2F2026-04-01%2FMiniMax-M2.7%2F2022235502865813945%2Fc307d7c4720d899676b8537c370d9ee7526b6a2bd26be62828229fd4023de4b2..png?Expires=1775068198&OSSAccessKeyId=LTAI5tGLnRTkBjLuYPjNcKQ8&Signature=GGfJXvrU0RqGM4NmH%2BJ%2FnHGQwEY%3D)
+![封面预览](https://minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com/ccv2%2F2026-04-09%2FMiniMax-M2.7%2F2022235502865813945%2F1599e82b93c2df168d01934e9354dce8d48de6e33c2d70086aaa3293a32447ab..png?Expires=1775827055&OSSAccessKeyId=LTAI5tGLnRTkBjLuYPjNcKQ8&Signature=jdKd1vuOOB%2FsTih4N3pXxq8uxL8%3D)
 
 **微信公众号封面图生成工具 — Claude Code Skill**
 
@@ -30,7 +30,7 @@ WechatCoverHTML 是一个 Claude Code Skill，可根据文章标题自动生成�
 
 ### 封面效果示例
 
-![封面预览](https://minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com/ccv2%2F2026-04-01%2FMiniMax-M2.7%2F2022235502865813945%2Fc307d7c4720d899676b8537c370d9ee7526b6a2bd26be62828229fd4023de4b2..png?Expires=1775068198&OSSAccessKeyId=LTAI5tGLnRTkBjLuYPjNcKQ8&Signature=GGfJXvrU0RqGM4NmH%2BJ%2FnHGQwEY%3D)
+![封面预览](https://minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com/ccv2%2F2026-04-09%2FMiniMax-M2.7%2F2022235502865813945%2F1599e82b93c2df168d01934e9354dce8d48de6e33c2d70086aaa3293a32447ab..png?Expires=1775827055&OSSAccessKeyId=LTAI5tGLnRTkBjLuYPjNcKQ8&Signature=jdKd1vuOOB%2FsTih4N3pXxq8uxL8%3D)
 
 > 示例封面：「用好AI Agent，本质上是个 UX 问题」
 
